@@ -52,7 +52,7 @@ local function makeCompatWindow()
             end
 
             function section:NewToggle(name, _, callback)
-                groupbox:AddToggle(name, {
+                return groupbox:AddToggle(name, {
                     Text = name,
                     Default = false,
                     Callback = callback
@@ -87,25 +87,27 @@ local function makeCompatWindow()
                 })
             end
 
-            function section:NewKeybind(name, _, key, callback)
+            function section:NewKeybind(name, _, key, callback, parentToggle)
                 if key == Enum.KeyCode.RightShift then
                     groupbox:AddLabel(name .. ": RightShift")
                     return
                 end
 
-                local toggle = groupbox:AddToggle(name, {
+                local toggle = parentToggle or groupbox:AddToggle(name, {
                     Text = name,
                     Default = false,
                     Callback = function() end
                 })
 
-                local toggleInner = toggle.TextLabel.Parent
-                local toggleOuter = toggleInner.Parent
-                toggle.TextLabel.Text = ""
-                toggleInner.BackgroundTransparency = 1
-                toggleInner.BorderSizePixel = 0
-                toggleOuter.BackgroundTransparency = 1
-                toggleOuter.BorderSizePixel = 0
+                if not parentToggle then
+                    local toggleInner = toggle.TextLabel.Parent
+                    local toggleOuter = toggleInner.Parent
+                    toggle.TextLabel.Text = ""
+                    toggleInner.BackgroundTransparency = 1
+                    toggleInner.BorderSizePixel = 0
+                    toggleOuter.BackgroundTransparency = 1
+                    toggleOuter.BorderSizePixel = 0
+                end
 
                 local keyPicker
                 local keyState = false
@@ -198,9 +200,12 @@ local Window = makeCompatWindow()
 
 local Flight = {
     Active = false,
-    Speed = 70,
-    VehicleSpeed = 100,
-    Enabled = false
+    Speed = 1,
+    VehicleSpeed = 1,
+    Enabled = false,
+    ShouldRestartAfterSeatExit = function()
+        return false
+    end
 }
 
 local player = Players.LocalPlayer
@@ -211,6 +216,8 @@ local flightEndedConnection
 local savedAutoRotate
 local flightAttachment
 local flightForce
+local wasVehicleSeated = false
+local seatExitStabilizeUntil = 0
 
 local function getFlightRoot()
     local character = player.Character
@@ -252,7 +259,7 @@ end
 local function setFlightInput(input, isDown)
     local key = input.KeyCode
     if key == Enum.KeyCode.W or key == Enum.KeyCode.A or key == Enum.KeyCode.S
-        or key == Enum.KeyCode.D or key == Enum.KeyCode.Space or key == Enum.KeyCode.LeftControl then
+        or key == Enum.KeyCode.D or key == Enum.KeyCode.E or key == Enum.KeyCode.Q then
         inputState[key] = isDown
     end
 end
@@ -263,8 +270,8 @@ local function syncFlightInputState()
         Enum.KeyCode.A,
         Enum.KeyCode.S,
         Enum.KeyCode.D,
-        Enum.KeyCode.Space,
-        Enum.KeyCode.LeftControl
+        Enum.KeyCode.E,
+        Enum.KeyCode.Q
     }) do
         inputState[key] = UserInputService:IsKeyDown(key)
     end
@@ -289,10 +296,10 @@ local function getFlightDirection()
     if inputState[Enum.KeyCode.A] then
         direction -= camera.CFrame.RightVector
     end
-    if inputState[Enum.KeyCode.Space] then
+    if inputState[Enum.KeyCode.E] then
         direction += Vector3.yAxis
     end
-    if inputState[Enum.KeyCode.LeftControl] then
+    if inputState[Enum.KeyCode.Q] then
         direction -= Vector3.yAxis
     end
 
@@ -300,11 +307,11 @@ local function getFlightDirection()
 end
 
 function Flight:SetSpeed(speed)
-    self.Speed = math.clamp(tonumber(speed) or self.Speed, 10, 250)
+    self.Speed = math.clamp(tonumber(speed) or self.Speed, 1, 200)
 end
 
 function Flight:SetVehicleSpeed(speed)
-    self.VehicleSpeed = math.clamp(tonumber(speed) or self.VehicleSpeed, 10, 500)
+    self.VehicleSpeed = math.clamp(tonumber(speed) or self.VehicleSpeed, 1, 500)
 end
 
 local function isVehicleSeated(humanoid)
@@ -337,6 +344,8 @@ function Flight:Start()
     end
 
     self.Active = true
+    wasVehicleSeated = isVehicleSeated(humanoid)
+    seatExitStabilizeUntil = 0
     savedAutoRotate = humanoid.AutoRotate
     humanoid.AutoRotate = false
 
@@ -377,21 +386,54 @@ function Flight:Start()
 
         local direction = getFlightDirection()
         local speed = self.Speed
-        if isVehicleSeated(currentHumanoid) then
+        local vehicleSeated = isVehicleSeated(currentHumanoid)
+
+        if flightForce then
+            if vehicleSeated then
+                flightForce.Force = Vector3.zero
+            else
+                flightForce.Force = Vector3.new(0, rootPart.AssemblyMass * workspace.Gravity, 0)
+            end
+        end
+
+        if wasVehicleSeated and not vehicleSeated then
+            seatExitStabilizeUntil = os.clock() + 0.3
+        end
+
+        wasVehicleSeated = vehicleSeated
+
+        if os.clock() < seatExitStabilizeUntil then
+            rootPart.AssemblyLinearVelocity = Vector3.zero
+            self:Stop()
+
+            task.delay(0.25, function()
+                if self.Enabled
+                    and self.ShouldRestartAfterSeatExit()
+                    and not self.Active then
+                    self:Start()
+                end
+            end)
+
+            return
+        end
+
+        if vehicleSeated then
             speed = self.VehicleSpeed
         end
 
         if direction.Magnitude > 0 then
             rootPart.AssemblyLinearVelocity = direction * speed
 
-            local horizontalDirection = Vector3.new(direction.X, 0, direction.Z)
-            if horizontalDirection.Magnitude > 0 then
-                local targetCFrame = CFrame.lookAt(
-                    rootPart.Position,
-                    rootPart.Position + horizontalDirection.Unit
-                )
-                local turnAlpha = 1 - math.exp(-10 * deltaTime)
-                rootPart.CFrame = rootPart.CFrame:Lerp(targetCFrame, turnAlpha)
+            if not vehicleSeated then
+                local horizontalDirection = Vector3.new(direction.X, 0, direction.Z)
+                if horizontalDirection.Magnitude > 0 then
+                    local targetCFrame = CFrame.lookAt(
+                        rootPart.Position,
+                        rootPart.Position + horizontalDirection.Unit
+                    )
+                    local turnAlpha = 1 - math.exp(-10 * deltaTime)
+                    rootPart.CFrame = rootPart.CFrame:Lerp(targetCFrame, turnAlpha)
+                end
             end
         else
             rootPart.AssemblyLinearVelocity = Vector3.zero
@@ -607,8 +649,8 @@ end)
 local PlayerTab = Window:NewTab("Player")
 local flightEnabled = false
 local flightActive = false
-local flightSpeed = 70
-local vehicleFlightSpeed = 100
+local flightSpeed = 1
+local vehicleFlightSpeed = 1
 local flightKeybind
 
 local PlayerSection = PlayerTab:NewSection("Player")
@@ -619,7 +661,7 @@ PlayerSection:NewSlider("Example Slider", "UI-only example value", 100, 0, funct
     print("[KUSU] Example Slider:", value)
 end)
 local Movement = PlayerTab:NewSection("Movement")
-Movement:NewToggle("Flight", "UI-only flight setting", function(state)
+local FlightToggle = Movement:NewToggle("Flight", "UI-only flight setting", function(state)
     flightEnabled = state
     Flight.Enabled = state
 
@@ -635,14 +677,14 @@ Movement:NewToggle("Flight", "UI-only flight setting", function(state)
         Flight:Toggle(false)
     end
 end)
-Movement:NewSlider("Flight Speed", "UI-only flight speed", 250, 10, function(value)
+Movement:NewSlider("Flight Speed", "UI-only flight speed", 200, 1, function(value)
     flightSpeed = value
     Flight:SetSpeed(value)
-end, 70)
-Movement:NewSlider("Vehicle Flight Speed", "Flight speed while seated in a vehicle", 500, 10, function(value)
+end, 1)
+Movement:NewSlider("Vehicle Flight Speed", "Flight speed while seated in a vehicle", 500, 1, function(value)
     vehicleFlightSpeed = value
     Flight:SetVehicleSpeed(value)
-end, 100)
+end, 1)
 flightKeybind = Movement:NewKeybind("Flight Keybind", "Right-click to choose Toggle or Hold", Enum.KeyCode.F, function(state)
     if not flightEnabled then
         return
@@ -651,7 +693,11 @@ flightKeybind = Movement:NewKeybind("Flight Keybind", "Right-click to choose Tog
     flightActive = state
     Flight:SetSpeed(flightSpeed)
     Flight:Toggle(flightActive)
-end)
+end, FlightToggle)
+
+Flight.ShouldRestartAfterSeatExit = function()
+    return flightEnabled and flightKeybind and flightKeybind.Mode == "Toggle"
+end
 
 local VisualsTab = Window:NewTab("Visuals")
 local Visuals = VisualsTab:NewSection("Visuals")
