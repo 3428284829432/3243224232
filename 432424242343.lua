@@ -1,3 +1,6 @@
+--// KUSU UI - Linoria version
+--// UI / configuration only. No gameplay automation or exploit functionality is included.
+
 local Players = game:GetService("Players")
 local TeleportService = game:GetService("TeleportService")
 local RunService = game:GetService("RunService")
@@ -25,6 +28,7 @@ local LinoriaWindow = Library:CreateWindow({
     MenuFadeTime = 0.15
 })
 
+-- Keep the original compact API while using Linoria's real controls underneath.
 local function makeCompatWindow()
     local window = {}
 
@@ -195,6 +199,7 @@ local Window = makeCompatWindow()
 local Flight = {
     Active = false,
     Speed = 70,
+    VehicleSpeed = 100,
     Enabled = false
 }
 
@@ -298,6 +303,14 @@ function Flight:SetSpeed(speed)
     self.Speed = math.clamp(tonumber(speed) or self.Speed, 10, 250)
 end
 
+function Flight:SetVehicleSpeed(speed)
+    self.VehicleSpeed = math.clamp(tonumber(speed) or self.VehicleSpeed, 10, 500)
+end
+
+local function isVehicleSeated(humanoid)
+    return humanoid.Sit or humanoid.SeatPart ~= nil
+end
+
 function Flight:Stop()
     self.Active = false
     stopFlightConnections()
@@ -363,9 +376,13 @@ function Flight:Start()
         end
 
         local direction = getFlightDirection()
+        local speed = self.Speed
+        if isVehicleSeated(currentHumanoid) then
+            speed = self.VehicleSpeed
+        end
 
         if direction.Magnitude > 0 then
-            rootPart.AssemblyLinearVelocity = direction * self.Speed
+            rootPart.AssemblyLinearVelocity = direction * speed
 
             local horizontalDirection = Vector3.new(direction.X, 0, direction.Z)
             if horizontalDirection.Magnitude > 0 then
@@ -407,6 +424,10 @@ end))
 Library:OnUnload(function()
     Flight:Stop()
 end)
+
+--==================================================
+-- Menu controls
+--==================================================
 
 local menuScale = 1
 local KusuRoot = LinoriaWindow.Holder
@@ -561,6 +582,10 @@ local function destroyMenu()
     Library:Unload()
 end
 
+--==================================================
+-- Main
+--==================================================
+
 local MainTab = Window:NewTab("Main")
 local General = MainTab:NewSection("General")
 General:NewLabel("KUSU")
@@ -583,6 +608,7 @@ local PlayerTab = Window:NewTab("Player")
 local flightEnabled = false
 local flightActive = false
 local flightSpeed = 70
+local vehicleFlightSpeed = 100
 local flightKeybind
 
 local PlayerSection = PlayerTab:NewSection("Player")
@@ -613,6 +639,10 @@ Movement:NewSlider("Flight Speed", "UI-only flight speed", 250, 10, function(val
     flightSpeed = value
     Flight:SetSpeed(value)
 end, 70)
+Movement:NewSlider("Vehicle Flight Speed", "Flight speed while seated in a vehicle", 500, 10, function(value)
+    vehicleFlightSpeed = value
+    Flight:SetVehicleSpeed(value)
+end, 100)
 flightKeybind = Movement:NewKeybind("Flight Keybind", "Right-click to choose Toggle or Hold", Enum.KeyCode.F, function(state)
     if not flightEnabled then
         return
