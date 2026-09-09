@@ -1,6 +1,3 @@
---// KUSU UI - Linoria version
---// UI / configuration only. No gameplay automation or exploit functionality is included.
-
 local Players = game:GetService("Players")
 local TeleportService = game:GetService("TeleportService")
 local RunService = game:GetService("RunService")
@@ -28,7 +25,6 @@ local LinoriaWindow = Library:CreateWindow({
     MenuFadeTime = 0.15
 })
 
--- Keep the original compact API while using Linoria's real controls underneath.
 local function makeCompatWindow()
     local window = {}
 
@@ -412,10 +408,6 @@ Library:OnUnload(function()
     Flight:Stop()
 end)
 
---==================================================
--- Menu controls
---==================================================
-
 local menuScale = 1
 local KusuRoot = LinoriaWindow.Holder
 
@@ -568,10 +560,6 @@ end
 local function destroyMenu()
     Library:Unload()
 end
-
---==================================================
--- Main
---==================================================
 
 local MainTab = Window:NewTab("Main")
 local General = MainTab:NewSection("General")
